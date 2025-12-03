@@ -17,9 +17,9 @@ from rag_engine.model_manager import (
     list_ollama_models, list_custom_models
 )
 from rag_engine.processor import load_document, chunk_text, sanitize_doc_id
-from rag_engine.embedder import Embedder
-from rag_engine.vector_store import VectorStore
-from rag_engine.chat_engine import ChatEngine
+from rag_engine.common.embedder import Embedder
+from rag_engine.vector_store.chroma_store import ChromaVectorStore
+from rag_engine.simple_rag import SimpleRAGEngine
 from rag_engine.history_manager import HistoryManager
 
 from .chat_bubble import ChatBubble, ContextBubble
@@ -55,13 +55,16 @@ class EmbedWorker(threading.Thread):
             text = load_document(self.path)
             chunks = chunk_text(text, 300)
             embedder = Embedder(self.embed_provider, self.embed_model)
-            vs = VectorStore(self.doc_id)
+            vs = ChromaVectorStore(self.doc_id)
 
-            def progress(current, total):
-                self.signals.set_status.emit(f"Embedding {current}/{total}...")
+            embeddings = []
+            total = len(chunks)
+            for i, chunk in enumerate(chunks, start=1):
+                emb = embedder.embed_text(chunk)
+                embeddings.append(emb)
+                self.signals.set_status.emit(f"Embedding {i}/{total}...")
 
-            vs.build_from_chunks(chunks, embedder, progress_callback=progress)
-
+            vs.add_documents(chunks, embeddings)
             self.signals.clear_status.emit()
         except Exception as e:
             self.signals.set_status.emit(f"[Error] {e}")
@@ -272,6 +275,17 @@ class MainWindow(QMainWindow):
 
         right_layout.addSpacing(10)
         
+        # RAG Type Selection
+        rag_type_label = QLabel("🤖 RAG Type:")
+        rag_type_label.setStyleSheet("font-weight: bold; color: #cccccc;")
+        right_layout.addWidget(rag_type_label)
+        self.rag_type_combo = QComboBox()
+        self.rag_type_combo.addItems(["Simple RAG", "Hybrid RAG", "Agentic RAG"])
+        self.rag_type_combo.currentIndexChanged.connect(self.on_rag_type_changed)
+        right_layout.addWidget(self.rag_type_combo)
+
+        right_layout.addSpacing(10)
+
         # Similarity Method Selection
         similarity_label = QLabel("🔍 Similarity Method:")
         similarity_label.setStyleSheet("font-weight: bold; color: #cccccc;")
@@ -372,15 +386,26 @@ class MainWindow(QMainWindow):
             item.setData(Qt.UserRole, chat["id"])
             self.history_list.addItem(item)
 
+    def on_rag_type_changed(self):
+        # Re-initialize if possible
+        if self.current_doc_id:
+            self.initialize_engine(self.current_doc_id)
+
     def refresh_docs(self):
-        folder = "data/embeddings"
-        os.makedirs(folder, exist_ok=True)
-        self.doc_combo.clear()
-        self.doc_combo.addItem("None", None)
-        for f in os.listdir(folder):
-            if f.endswith(".pkl"):
-                doc_id = f[:-4]
-                self.doc_combo.addItem(doc_id, doc_id)
+        # List collections from ChromaDB
+        try:
+            import chromadb
+            client = chromadb.PersistentClient(path="data/chroma_db")
+            collections = client.list_collections()
+            
+            self.doc_combo.clear()
+            self.doc_combo.addItem("None", None)
+            for col in collections:
+                self.doc_combo.addItem(col.name, col.name)
+        except Exception as e:
+            print(f"Error listing collections: {e}")
+            self.doc_combo.clear()
+            self.doc_combo.addItem("None", None)
 
     def refresh_llm_models(self):
         provider = self.llm_provider_combo.currentText()
@@ -486,25 +511,51 @@ class MainWindow(QMainWindow):
         llm_mod = self.llm_model_combo.currentText()
         embed_prov = self.embed_provider_combo.currentText()
         embed_mod = self.embed_model_combo.currentText()
+        rag_type = self.rag_type_combo.currentText()
         
         if not (llm_mod and embed_mod):
             return
 
         try:
-            vs = VectorStore(doc_id)
-            vs.load()
+            vs = ChromaVectorStore(doc_id)
+            if not vs.exists():
+                # Should not happen if selected from list, but just in case
+                pass
             
             embedder = Embedder(embed_prov, embed_mod)
-            self.chat_engine = ChatEngine(
-                vector_store=vs,
-                embedder=embedder,
-                provider=llm_prov,
-                model_name=llm_mod,
-                chat_id=self.current_chat_id
-            )
+            
+            if rag_type == "Simple RAG":
+                self.chat_engine = SimpleRAGEngine(
+                    vector_store=vs,
+                    embedder=embedder,
+                    provider=llm_prov,
+                    model_name=llm_mod,
+                    chat_id=self.current_chat_id
+                )
+            elif rag_type == "Hybrid RAG":
+                QMessageBox.information(self, "Info", "Hybrid RAG is not yet implemented. Using Simple RAG.")
+                self.chat_engine = SimpleRAGEngine(
+                    vector_store=vs,
+                    embedder=embedder,
+                    provider=llm_prov,
+                    model_name=llm_mod,
+                    chat_id=self.current_chat_id
+                )
+            elif rag_type == "Agentic RAG":
+                QMessageBox.information(self, "Info", "Agentic RAG is not yet implemented. Using Simple RAG.")
+                self.chat_engine = SimpleRAGEngine(
+                    vector_store=vs,
+                    embedder=embedder,
+                    provider=llm_prov,
+                    model_name=llm_mod,
+                    chat_id=self.current_chat_id
+                )
+                
             self.save_ui_state()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to initialize engine: {e}")
+            import traceback
+            traceback.print_exc()
 
     def on_upload(self):
         path, _ = QFileDialog.getOpenFileName(self, "Select Document", "", "Documents (*.txt *.pdf *.docx)")
@@ -512,9 +563,9 @@ class MainWindow(QMainWindow):
             return
 
         doc_id = sanitize_doc_id(path)
-        vs = VectorStore(doc_id)
+        vs = ChromaVectorStore(doc_id)
 
-        if vs.load():
+        if vs.exists():
             QMessageBox.information(self, "Loaded", "Loaded existing embeddings.")
             self.refresh_docs()
             idx = self.doc_combo.findData(doc_id)
@@ -537,7 +588,7 @@ class MainWindow(QMainWindow):
         threading.Thread(target=self._wait_for_embedding, args=(doc_id,), daemon=True).start()
 
     def _wait_for_embedding(self, doc_id):
-        vs = VectorStore(doc_id)
+        vs = ChromaVectorStore(doc_id)
         while not vs.exists():
             threading.Event().wait(0.5)
         

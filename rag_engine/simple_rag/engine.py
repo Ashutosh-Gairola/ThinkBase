@@ -19,7 +19,7 @@ from rag_engine.model_manager import get_llm_path, is_gpu_available
 from rag_engine.config_manager import ConfigManager
 from rag_engine.history_manager import HistoryManager
 
-class ChatEngine:
+class SimpleRAGEngine:
     def __init__(self, vector_store, embedder, provider: str, model_name: str, chat_id: str = None):
         self.vs = vector_store
         self.embedder = embedder
@@ -68,25 +68,28 @@ Context:
         print(f"Retrieving context for query: {query}")
         # Embed query
         query_vec = self.embedder.embed_text(query)
-        print("#####################")
-        print(f"Query embedded, vector length: {len(query_vec)}")
-        print("#####################")
-        # Search in vector store
-        results = self.vs.search(query_vec, top_k=3, similarity_method=similarity_method)
-        print(f"Retrieved {len(results)} results")
-        print(f"Using similarity method: {similarity_method}")
         
+        # Search in vector store
+        # New VectorStore interface returns [(doc, score, metadata)]
+        results = self.vs.search(query_vec, top_k=3)
+        
+        print(f"Retrieved {len(results)} results")
+        
+        # Format for display and context
+        formatted_results = []
+        for doc, score, meta in results:
+            formatted_results.append((doc, score))
+            
         # Print top 3 context with scores
         print("\n=== Top 3 Retrieved Context ===")
-        for i, (chunk, score) in enumerate(results, 1):
+        for i, (chunk, score) in enumerate(formatted_results, 1):
             preview = chunk[:100] + "..." if len(chunk) > 100 else chunk
             print(f"\n[{i}] Score: {score:.4f}")
             print(f"Context: {preview}")
         print("=" * 40 + "\n")
         
-        context = "\n\n".join([r[0] for r in results])
-        print(f"Context length: {len(context)} characters")
-        return context, results  # Return both context string and results with scores
+        context = "\n\n".join([r[0] for r in formatted_results])
+        return context, formatted_results
 
     def chat(self, query, retrieved_context, stream=True):
         # Handle both old format (string) and new format (tuple)
@@ -131,10 +134,6 @@ Context:
                             chunk_count = 0
                             for chunk in resp:
                                 chunk_count += 1
-                                # Debug: print chunk structure for first few chunks
-                                if chunk_count <= 3:
-                                    print(f"DEBUG: Chunk {chunk_count}: {chunk}")
-                                
                                 if not chunk.get("choices"):
                                     continue
                                     
@@ -149,19 +148,13 @@ Context:
                                     message = choice["message"]
                                     if "content" in message and message["content"]:
                                         yield {"message": {"content": message["content"]}}
-                            print(f"Total chunks processed: {chunk_count}")
                         except Exception as e:
                             print(f"ERROR in local_stream_adapter: {e}")
-                            import traceback
-                            traceback.print_exc()
                             yield {"message": {"content": f"\n[Streaming Error: {str(e)}]"}}
                     return local_stream_adapter()
-                print("Non-streaming response received")
                 return resp["choices"][0]["message"]["content"]
             except Exception as e:
                 print(f"ERROR in local provider: {e}")
-                import traceback
-                traceback.print_exc()
                 if stream:
                     def error_stream():
                         yield {"message": {"content": f"Error: {str(e)}"}}
@@ -199,8 +192,6 @@ Context:
             
             # Google Generative AI chat
             chat = self.google_model.start_chat(history=[])
-            # We inject system prompt into the first message or as context if possible, 
-            # but Gemini API is a bit different. Let's just prepend context to query.
             full_query = f"{system_prompt}\n\nUser Question: {query}"
             
             response = chat.send_message(full_query, stream=stream)
@@ -217,7 +208,6 @@ Context:
 
     def save_history(self, history):
         if self.chat_id:
-            # Load existing to preserve metadata
             existing = self.history_manager.load_chat(self.chat_id)
             if existing:
                 existing["messages"] = history

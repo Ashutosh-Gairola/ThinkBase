@@ -10,3 +10,4 @@ llama-cpp-python
 openai
 google-generativeai
 numpy
+chromadb

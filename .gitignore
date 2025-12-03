@@ -14,3 +14,4 @@ BUG_FIX_SUMMARY.md
 offline_models/embedding/*
 offline_models/language/*
 
+data/chroma_db/*
