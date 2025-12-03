@@ -1,0 +1,16 @@
+assets/logo.ico
+build
+build/
+dist
+dist/
+venv/
+venv
+rag_engine/__pycache__/
+ui/__pycache__/
+main.spec
+data/chat_history/*
+data/embeddings/*
+*.spec
+BUG_FIX_SUMMARY.md
+offline_models/embedding/*
+offline_models/language/*

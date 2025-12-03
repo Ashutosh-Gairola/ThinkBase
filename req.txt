@@ -1,0 +1,12 @@
+PySide6>=6.5
+ollama
+pymupdf 
+python-docx
+pytesseract 
+fuzzywuzzy 
+python-Levenshtein
+pyinstaller
+llama-cpp-python
+openai
+google-generativeai
+numpy

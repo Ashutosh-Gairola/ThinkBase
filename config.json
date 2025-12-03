@@ -1,0 +1,12 @@
+{
+    "openai_api_key": "",
+    "google_api_key": "",
+    "custom_model_paths": [],
+    "theme_preference": "dark",
+    "use_gpu": true,
+    "last_selected_llm_provider": "local",
+    "last_selected_llm_model": "Llama-3.2-1B-Instruct-IQ3_M.gguf",
+    "last_selected_embed_provider": "local",
+    "last_selected_embed_model": "bge-base-en-v1.5-q4_k_m.gguf",
+    "similarity_method": "cosine"
+}
