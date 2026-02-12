@@ -122,12 +122,47 @@ class ChatBubble(QWidget):
     - is_user=False => left aligned (dark)
     """
 
+
     def __init__(self, text: str = "", is_user: bool = False, show_loading: bool = False):
         super().__init__()
         self.is_user = is_user
         self.show_loading = show_loading
 
-        # label holds the text
+        # --- Thinking Section (Collapsible) ---
+        self.thinking_widget = QWidget()
+        self.thinking_layout = QVBoxLayout(self.thinking_widget)
+        self.thinking_layout.setContentsMargins(0, 0, 0, 8)
+        self.thinking_layout.setSpacing(4)
+        
+        self.thinking_header = QPushButton("🤔 Thinking Process (Click to expand)")
+        self.thinking_header.setStyleSheet("""
+            QPushButton {
+                background-color: #3a3a3a;
+                border: 1px solid #555;
+                border-radius: 8px;
+                padding: 6px 10px;
+                color: #aaa;
+                font-size: 11px;
+                text-align: left;
+            }
+            QPushButton:hover {
+                background-color: #444;
+                color: #fff;
+            }
+        """)
+        self.thinking_header.setCursor(Qt.PointingHandCursor)
+        self.thinking_header.clicked.connect(self.toggle_thinking)
+        
+        self.thinking_content = QLabel("")
+        self.thinking_content.setWordWrap(True)
+        self.thinking_content.setStyleSheet("color: #888; font-size: 11px; padding: 4px; font-family: monospace;")
+        self.thinking_content.hide()
+        
+        self.thinking_layout.addWidget(self.thinking_header)
+        self.thinking_layout.addWidget(self.thinking_content)
+        self.thinking_widget.hide() # Hidden by default until we have thoughts
+
+        # --- Main Message Label ---
         self.label = QLabel(text)
         self.label.setWordWrap(True)
         self.label.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -169,13 +204,22 @@ class ChatBubble(QWidget):
                 """
             )
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(0)
-
+        # Global container for bubble (Vertical: Thinking on top, Message below)
+        self.container_layout = QVBoxLayout()
+        self.container_layout.setContentsMargins(0,0,0,0)
+        self.container_layout.setSpacing(0)
+        
+        # Add components to vertical container
+        if not is_user:
+            self.container_layout.addWidget(self.thinking_widget)
+            
+        # Message row (horizontal for alignment)
+        msg_row = QHBoxLayout()
+        msg_row.setContentsMargins(0,0,0,0)
+        
         if is_user:
-            layout.addStretch()
-            layout.addWidget(self.label, 0, Qt.AlignRight)
+            msg_row.addStretch()
+            msg_row.addWidget(self.label, 0, Qt.AlignRight)
         else:
             if show_loading and self.loading_indicator:
                 # Create container for loading indicator
@@ -191,12 +235,34 @@ class ChatBubble(QWidget):
                         max-width: 520px;
                     }
                 """)
-                layout.addWidget(container, 0, Qt.AlignLeft)
+                msg_row.addWidget(container, 0, Qt.AlignLeft)
             else:
-                layout.addWidget(self.label, 0, Qt.AlignLeft)
-            layout.addStretch()
-
+                msg_row.addWidget(self.label, 0, Qt.AlignLeft)
+            msg_row.addStretch()
+            
+        self.container_layout.addLayout(msg_row)
+        
+        # Main layout of this QWidget
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.addLayout(self.container_layout)
         self.setLayout(layout)
+
+    def toggle_thinking(self):
+        if self.thinking_content.isVisible():
+            self.thinking_content.hide()
+            self.thinking_header.setText("🤔 Thinking Process (Click to expand)")
+        else:
+            self.thinking_content.show()
+            self.thinking_header.setText("🤔 Thinking Process (Click to collapse)")
+
+    def append_thought(self, text: str):
+        """Append to the thinking section."""
+        if not self.thinking_widget.isVisible():
+            self.thinking_widget.show()
+        
+        current = self.thinking_content.text()
+        self.thinking_content.setText(current + text + "\n")
 
     def append_text(self, text: str):
         """Append streaming text to the bubble (main thread only)."""

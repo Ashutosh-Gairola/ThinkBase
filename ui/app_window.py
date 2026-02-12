@@ -20,6 +20,7 @@ from rag_engine.processor import load_document, chunk_text, sanitize_doc_id
 from rag_engine.common.embedder import Embedder
 from rag_engine.vector_store.chroma_store import ChromaVectorStore
 from rag_engine.simple_rag import SimpleRAGEngine
+from rag_engine.agentic_rag.engine import AgenticRAGEngine
 from rag_engine.history_manager import HistoryManager
 
 from .chat_bubble import ChatBubble, ContextBubble
@@ -32,6 +33,7 @@ from .styles import DARK_THEME
 class UISignals(QObject):
     append_bubble = Signal(object)   # expects ChatBubble instance
     typing_update = Signal(str)      # incremental text append to current bubble
+    thinking_update = Signal(str)    # incremental thought append
     set_status = Signal(str)
     clear_status = Signal()
     enable_input = Signal(bool)
@@ -86,6 +88,7 @@ class MainWindow(QMainWindow):
         self.ui = UISignals(self)
         self.ui.append_bubble.connect(self._slot_append_bubble)
         self.ui.typing_update.connect(self._slot_typing_update)
+        self.ui.thinking_update.connect(self._slot_thinking_update)
         self.ui.set_status.connect(self._slot_set_status)
         self.ui.clear_status.connect(self._slot_clear_status)
         self.ui.enable_input.connect(self._slot_enable_input)
@@ -542,8 +545,7 @@ class MainWindow(QMainWindow):
                     chat_id=self.current_chat_id
                 )
             elif rag_type == "Agentic RAG":
-                QMessageBox.information(self, "Info", "Agentic RAG is not yet implemented. Using Simple RAG.")
-                self.chat_engine = SimpleRAGEngine(
+                self.chat_engine = AgenticRAGEngine(
                     vector_store=vs,
                     embedder=embedder,
                     provider=llm_prov,
@@ -704,14 +706,32 @@ class MainWindow(QMainWindow):
             for packet in stream:
                 packet_count += 1
                 if packet_count <= 3:
-                    print(f"DEBUG: Packet {packet_count}: {packet}")
+                     print(f"DEBUG: Packet {packet_count}: {packet}")
+
+                # Handle dict packets (Event stream)
+                if isinstance(packet, dict):
+                    # Check for "type" (Agentic RAG)
+                    if "type" in packet:
+                        msg_type = packet["type"]
+                        content = packet.get("content", "")
+                        
+                        if msg_type == "thought":
+                            self.ui.thinking_update.emit(content)
+                        elif msg_type == "answer":
+                            answer += content
+                            self.ui.typing_update.emit(content)
                     
-                content = packet.get("message", {}).get("content", "")
-                if not content:
-                    continue
-                answer += content
-                # Emit typing update to append to the answer bubble
-                self.ui.typing_update.emit(content)
+                    # Check for "message" wrapper (Standard/Stream Adapter)
+                    elif "message" in packet:
+                        content = packet["message"].get("content", "")
+                        if content:
+                            answer += content
+                            self.ui.typing_update.emit(content)
+                            
+                # Handle old string packets (if any legacy code remains)
+                elif isinstance(packet, str):
+                    answer += packet
+                    self.ui.typing_update.emit(packet)
             
             print(f"Stream completed. Total packets: {packet_count}, Answer length: {len(answer)}")
             print(f"Answer content: {answer[:200]}...")  # Debug: print first 200 chars
@@ -798,19 +818,23 @@ class MainWindow(QMainWindow):
         if hasattr(bubble, 'label'):
             bubble.label.show()
         # Insert before the stretch at the end
-        self.chat_container_layout.insertWidget(self.chat_container_layout.count() - 1, bubble)
-        # Ensure container and scroll area are visible
-        self.chat_container.show()
-        self.scroll.show()
+        count = self.chat_container_layout.count()
+        if count > 0:
+            self.chat_container_layout.insertWidget(count - 1, bubble)
+        else:
+            self.chat_container_layout.addWidget(bubble)
+            
         self._scroll_to_bottom()
-        # Force update and repaint
-        QApplication.processEvents()
-        bubble.update()
-        self.chat_container.update()
 
     def _slot_typing_update(self, text):
         if self.current_bot_bubble:
-            # Make sure the bubble is ready to receive text
+            self.current_bot_bubble.append_text(text)
+            self._scroll_to_bottom()
+
+    def _slot_thinking_update(self, text):
+        if self.current_bot_bubble:
+            self.current_bot_bubble.append_thought(text)
+            self._scroll_to_bottom()
             if hasattr(self.current_bot_bubble, 'show_loading') and self.current_bot_bubble.show_loading:
                 # If still showing loading, hide loading indicator and show label
                 if hasattr(self.current_bot_bubble, 'loading_indicator') and self.current_bot_bubble.loading_indicator:
