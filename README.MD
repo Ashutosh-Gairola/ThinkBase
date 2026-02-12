@@ -11,6 +11,7 @@ Your feedback, suggestions, and contributions are greatly appreciated.
 
 Thank you for trying ThinkBase!
 
+
 </details>
 
 # 📘 ThinkBase — Private Offline RAG Desktop App
